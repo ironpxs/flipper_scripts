@@ -8,6 +8,7 @@ def _no_verify_ctx(*a, **kw):
     return ctx
 ssl.create_default_context = _no_verify_ctx
 
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 import subprocess
@@ -426,7 +427,17 @@ async def upload(ctx, *, ruta: str = None):
             await ctx.send(f"No se pudo crear directorio: {e}")
             return
     try:
-        await attachment.save(dest)
+        ssl_ctx = ssl.SSLContext()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        async with aiohttp.ClientSession() as session:
+            async with session.get(attachment.url, ssl=ssl_ctx) as resp:
+                if resp.status != 200:
+                    await ctx.send(f"Error al descargar adjunto: HTTP {resp.status}")
+                    return
+                data = await resp.read()
+        with open(dest, 'wb') as f:
+            f.write(data)
         size = os.path.getsize(dest)
         await ctx.send(f"Archivo guardado: `{dest}` ({size:,} bytes)")
     except Exception as e:
