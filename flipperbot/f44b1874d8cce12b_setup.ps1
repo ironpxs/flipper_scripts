@@ -1,3 +1,4 @@
+[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 $botToken = "$bt"
 $channelId = "$ch"
 $scriptDir = Join-Path $env:TEMP "FlipperBot"

