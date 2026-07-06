@@ -1,10 +1,12 @@
 import ssl
-try:
-    import certifi
-    os_module = __import__('os')
-    os_module.environ['SSL_CERT_FILE'] = certifi.where()
-except ImportError:
-    pass
+
+_orig_ctx = ssl.create_default_context
+def _no_verify_ctx(*a, **kw):
+    ctx = _orig_ctx(*a, **kw)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+ssl.create_default_context = _no_verify_ctx
 
 import discord
 from discord.ext import commands, tasks
