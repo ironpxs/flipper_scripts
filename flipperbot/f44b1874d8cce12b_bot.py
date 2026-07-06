@@ -430,12 +430,25 @@ async def upload(ctx, *, ruta: str = None):
         ssl_ctx = ssl.SSLContext()
         ssl_ctx.check_hostname = False
         ssl_ctx.verify_mode = ssl.CERT_NONE
-        async with aiohttp.ClientSession() as session:
-            async with session.get(attachment.url, ssl=ssl_ctx) as resp:
-                if resp.status != 200:
-                    await ctx.send(f"Error al descargar adjunto: HTTP {resp.status}")
-                    return
-                data = await resp.read()
+        urls = [attachment.proxy_url, attachment.url]
+        data = None
+        for url in urls:
+            if not url:
+                continue
+            for headers in [{}, {'Authorization': f'Bot {BOT_TOKEN}'}]:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, ssl=ssl_ctx, headers=headers) as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                break
+                except Exception:
+                    continue
+            if data:
+                break
+        if not data:
+            await ctx.send("Error: no se pudo descargar el adjunto (403 en todas las URLs)")
+            return
         with open(dest, 'wb') as f:
             f.write(data)
         size = os.path.getsize(dest)
