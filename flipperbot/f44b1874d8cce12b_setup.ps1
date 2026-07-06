@@ -37,7 +37,7 @@ $configPath = Join-Path $scriptDir "config.py"
 @"
 BOT_TOKEN = "$botToken"
 CHANNEL_ID = $channelId
-PORTABLE_PYTHON = $(if ($pyDir) { '"' + $pyDir + '"' } else { 'None' })
+PORTABLE_PYTHON = $(if ($pyDir) { '"' + $pyDir.Replace('\','\\') + '"' } else { 'None' })
 "@ | Out-File -FilePath $configPath -Encoding ASCII
 
 $botPath = Join-Path $scriptDir "bot.py"
