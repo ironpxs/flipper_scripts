@@ -1,3 +1,11 @@
+import ssl
+try:
+    import certifi
+    os_module = __import__('os')
+    os_module.environ['SSL_CERT_FILE'] = certifi.where()
+except ImportError:
+    pass
+
 import discord
 from discord.ext import commands, tasks
 import subprocess

@@ -31,7 +31,7 @@ if (-not $pythonPath) {
     $pyDir = $null
 }
 
-& $pythonPath -m pip install discord.py Pillow psutil --quiet 2>$null
+& $pythonPath -m pip install discord.py Pillow psutil certifi --quiet 2>$null
 
 $configPath = Join-Path $scriptDir "config.py"
 $cfgLines = @()
